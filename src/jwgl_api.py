@@ -522,59 +522,129 @@ class JwglAPI:
             self.logger.error(f"获取成绩失败: {str(e)}")
             return {'grades': [], 'error': str(e)}
     
-    def get_exam_schedule(self) -> Dict[str, Any]:
+    def get_exam_schedule(self, semester: str = None) -> List[Dict[str, Any]]:
         """
         获取考试安排
         
+        Args:
+            semester: 学年学期，如"2025-2026-1"，为空则获取当前学期
+            
         Returns:
-            考试安排信息
+            考试安排列表，每个元素包含：
+            - 序号: 考试序号
+            - 考试场次: 考试场次信息
+            - 课程编号: 课程编号
+            - 课程名称: 课程名称
+            - 考试时间: 考试时间
+            - 考场: 考场地点
+            - 座位号: 座位号
+            - 准考证号: 准考证号
         """
         try:
-            url = '/jsxsd/xsks/xsksap_list'
-            
-            # GET和POST都支持，默认使用POST（更稳定）
-            response = self._request('POST', url, data=params)
+            # 1. 先GET查询页面获取表单信息
+            query_url = '/jsxsd/xsks/xsksap_query'
+            response = self._request('GET', query_url)
             response.raise_for_status()
             
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # 查找考试安排表格（使用正确的ID）
-            exam_table = soup.find('table', {'id': 'dataList'})
-            if not exam_table:
-                # 尝试使用class查找
-                exam_table = soup.find('table', {'class': 'Nsb_r_list Nsb_table'})
+            # 获取默认学期（如果未指定）
+            if not semester:
+                # 查找当前选中的学期
+                semester_select = soup.find('select', {'name': 'xnxqid'})
+                if semester_select:
+                    selected_option = semester_select.find('option', selected=True)
+                    if selected_option:
+                        semester = selected_option.get('value', '')
+                    else:
+                        # 如果没有选中项，取第一个非空选项
+                        options = semester_select.find_all('option')
+                        for option in options:
+                            value = option.get('value', '').strip()
+                            if value:
+                                semester = value
+                                break
+                
+                # 如果仍然没有学期，使用默认值
+                if not semester:
+                    semester = '2025-2026-1'
+            
+            # 2. POST提交查询请求
+            list_url = '/jsxsd/xsks/xsksap_list'
+            
+            # 根据分析的网络请求构建POST数据
+            post_data = {
+                'xnxqid': semester,  # 学年学期ID
+                'xqlb': ''          # 学期类别（空表示全部）
+            }
+            
+            headers = {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Referer': f'{self.base_url}{query_url}'
+            }
+            
+            response = self._request('POST', list_url, data=post_data, headers=headers)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # 3. 解析考试安排表格
+            # 根据测试结果，需要找到包含正确表头的表格（第2个表格）
+            exam_table = None
+            tables = soup.find_all('table')
+            
+            # 查找包含考试安排表头的表格
+            for table in tables:
+                header_row = table.find('tr')
+                if header_row:
+                    headers = [th.get_text(strip=True) for th in header_row.find_all(['th', 'td'])]
+                    # 检查是否包含考试安排的关键列
+                    if '序号' in headers and '考试场次' in headers and '课程名称' in headers:
+                        exam_table = table
+                        break
             
             if not exam_table:
-                self.logger.warning("未找到考试安排数据")
-                return {'exams': [], 'error': '未找到考试安排数据'}
+                self.logger.warning("未找到考试安排表格")
+                return []
             
             exams = []
+            rows = exam_table.find_all('tr')
             
-            # 解析表头
-            header_row = exam_table.find('tr')
-            headers = [th.get_text(strip=True) for th in header_row.find_all(['th', 'td'])]
+            # 跳过表头行
+            data_rows = rows[1:] if len(rows) > 1 else []
             
-            # 解析考试数据
-            rows = exam_table.find_all('tr')[1:]  # 跳过表头
-            
-            for row in rows:
+            for row in data_rows:
                 cells = row.find_all('td')
-                if len(cells) >= len(headers):
-                    exam = {}
-                    for i, header in enumerate(headers):
-                        if i < len(cells):
-                            exam[header] = cells[i].get_text(strip=True)
+                
+                # 检查是否是"未查询到数据"的情况
+                if len(cells) == 1 and '未查询到数据' in cells[0].get_text():
+                    self.logger.info(f"学期 {semester} 暂无考试安排")
+                    break
+                
+                # 解析考试数据（至少需要8列：序号到准考证号）
+                if len(cells) >= 8:
+                    exam = {
+                        '序号': cells[0].get_text(strip=True),
+                        '考试场次': cells[1].get_text(strip=True),
+                        '课程编号': cells[2].get_text(strip=True),
+                        '课程名称': cells[3].get_text(strip=True),
+                        '考试时间': cells[4].get_text(strip=True),
+                        '考场': cells[5].get_text(strip=True),
+                        '座位号': cells[6].get_text(strip=True),
+                        '准考证号': cells[7].get_text(strip=True)
+                    }
+                    
+                    # 添加学期信息
+                    exam['学期'] = semester
+                    
                     exams.append(exam)
             
-            self.logger.info(f"获取考试安排成功，共{len(exams)}场考试")
-            return {
-                'exams': exams,
-                'total_count': len(exams)
-            }
+            self.logger.info(f"获取考试安排成功: 学期 {semester}，共 {len(exams)} 场考试")
+            return exams
             
         except Exception as e:
             self.logger.error(f"获取考试安排失败: {str(e)}")
-            return {'exams': [], 'error': str(e)}
+            return []
     
     def get_available_semesters(self) -> List[Dict[str, str]]:
         """
