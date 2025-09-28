@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-长沙医学院强智教务系统API接口
+强智教务系统 API接口
 主要功能：获取个人信息、课程表、成绩、考试安排等
 """
 
@@ -24,7 +24,7 @@ except ImportError:
 
 class JwglAPI:
     """
-    长沙医学院强智教务系统API接口类
+    强智教务系统 API接口类
     
     使用已登录的session进行各种教务信息查询
     支持传入 requests.Session 或 SessionManager

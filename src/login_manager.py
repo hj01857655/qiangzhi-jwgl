@@ -30,7 +30,7 @@ class LoginManager:
         初始化登录管理器
         
         Args:
-            base_url: 教务系统基础URL（默认为长沙医学院）
+            base_url: 教务系统基础URL
         """
         self.base_url = base_url.rstrip('/')
         self.session = requests.Session()
